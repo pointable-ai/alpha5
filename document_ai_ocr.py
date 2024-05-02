@@ -67,7 +67,7 @@ class BatchConfig:
 @dataclass
 class BlobStorageTransferConfig:
     project_id: str
-    source_directory: str
+    source_directory: str  # Local directory where the files come from
     gcs_bucket_name: str
     gcs_prefix: str = ""
     max_workers: int = 8
