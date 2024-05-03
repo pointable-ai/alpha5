@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import google.auth
 from google.api_core import operation
@@ -17,6 +17,7 @@ from google.api_core.exceptions import InternalServerError, RetryError
 from google.cloud import documentai, storage
 from google.cloud.documentai_toolbox import gcs_utilities
 from pypdf import PdfReader
+from cloudpathlib import CloudPath
 
 # Setup logging
 logging.basicConfig(
@@ -226,7 +227,9 @@ def upload_files_to_blob_storage(
     blob_transfer_config: BlobStorageTransferConfig,
 ) -> List[operation.Operation]:
     bucket = storage_client.bucket(blob_transfer_config.gcs_bucket_name)
-    filepaths = get_filepaths_from_directory(blob_transfer_config.source_directory)
+    filepaths = get_filepaths_from_directory(
+        Path(blob_transfer_config.source_directory)
+    )
 
     results = storage.transfer_manager.upload_many_from_filenames(
         bucket,
@@ -244,11 +247,15 @@ def upload_files_to_blob_storage(
             logger.info("Uploaded {} to {}.".format(name, bucket.name))
 
 
-def get_filepaths_from_directory(directory: str) -> List[str]:
-    directory_as_path_obj = Path(directory)
-    paths = directory_as_path_obj.rglob("*")
-    file_paths = [path for path in paths if path.is_file()]
-    relative_paths = [path.relative_to(directory) for path in file_paths]
+def get_filepaths_from_directory(directory_path: Union[Path, CloudPath]) -> List[str]:
+    if isinstance(directory_path, CloudPath):
+        if directory_path.stem == directory_path.bucket:
+            raise ValueError(
+                "Root level recursive search not supported by cloudpathlib"
+            )
+    paths = directory_path.rglob("*")
+    file_paths = [path for path in paths if not path.is_dir()]
+    relative_paths = [path.relative_to(directory_path) for path in file_paths]
     string_paths = [str(path) for path in relative_paths]
     logger.info("Found {} files.".format(len(string_paths)))
     return string_paths
