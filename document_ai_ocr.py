@@ -4,6 +4,7 @@ Friendlier Document AI OCR.
 These helper functions are designed to be more user friendly and robustly documented than the official SDK.
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -261,6 +262,36 @@ def get_filepaths_from_directory(directory_path: Union[Path, CloudPath]) -> List
     return string_paths
 
 
+def get_contents_from_ocr_batch_operation(
+    batch_operation: operation.Operation, delimiter: str = ""
+) -> dict[str, str]:
+    """
+    Get the OCR results from a batch OCR operation.
+
+    Args:
+        batch_operation (operation.Operation): The batch OCR operation.
+        delimiter (str): The delimiter to use to join the OCR results.
+
+    Returns:
+        dict[str, str]: filename mapped to concatenated OCR text results.
+    """
+    ocr_results = {}
+    for ocr_process in batch_operation.metadata.individual_process_statuses:
+        source_file_name = Path(ocr_process.input_gcs_source).name
+        output_destination = CloudPath(ocr_process.output_gcs_destination)
+        for path in output_destination.glob("*"):
+            result = []
+            with open(path, "r") as fp:
+                result_part = json.load(fp)
+            result_part_text = result_part.get("text")
+            if not result_part_text:
+                logger.warning(f"No text found in {path}")
+                continue
+            result.append(result_part_text)
+            ocr_results[source_file_name] = delimiter.join(result)
+    return ocr_results
+
+
 if __name__ == "__main__":
     FILE_PATH = "test/sample_upload.pdf"
     GCS_BUCKET_NAME = "pointable-ai-staging-doc-ai"
@@ -293,20 +324,21 @@ if __name__ == "__main__":
 
     # ===Async Processing===
     # Upload files for async processing
+    GCS_PREFIX = "ops_demo"
     storage_client = storage.Client()
     blob_transfer_config = BlobStorageTransferConfig(
         project_id=PROJECT_ID,
         source_directory="./demo",
         gcs_bucket_name=GCS_BUCKET_NAME,
-        gcs_prefix="demo/",
+        gcs_prefix=GCS_PREFIX,
     )
     upload_files_to_blob_storage(storage_client, blob_transfer_config)
 
     # Setup async batch processing
-    OUTPUT_SUBDIR = "demo_output"
+    OUTPUT_SUBDIR = "ops_demo_output"
     batch_config = BatchConfig(
         gcs_bucket_name=GCS_BUCKET_NAME,
-        gcs_prefix="demo/",  # root dir if empty string
+        gcs_prefix=GCS_PREFIX,  # root dir if empty string
         gcs_output_uri=f"gs://{GCS_BUCKET_NAME}/{OUTPUT_SUBDIR}/",
         batch_size=MAX_BATCH_SIZE,
     )
@@ -317,6 +349,12 @@ if __name__ == "__main__":
     batch_operations = batch_process_document_ocr(
         batch_config, doc_processor_client, doc_ai_config, process_options
     )
-    for batch_operation in batch_operations:
-        check_batch_operation_status(batch_operation)
     # ===End Async Processing===
+
+    # ===Retrieving OCR Results===
+    all_ocr_results = {}
+    for batch_operation in batch_operations:
+        if check_batch_operation_status(batch_operation):
+            ocr_results = get_contents_from_ocr_batch_operation(batch_operation)
+            all_ocr_results.update(ocr_results)
+    # ===End Retrieving OCR Results===
