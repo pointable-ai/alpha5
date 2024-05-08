@@ -295,8 +295,8 @@ def get_contents_from_ocr_batch_operation(
 if __name__ == "__main__":
     FILE_PATH = "test/sample_upload.pdf"
     GCS_BUCKET_NAME = "pointable-ai-staging-doc-ai"
-    PROJECT_ID = "PROJECT ID HERE"
-    PROCESSOR_ID = "PROCESSOR ID HERE"
+    PROJECT_ID = "809321367616"
+    PROCESSOR_ID = "257ee84105155eb2"
 
     doc_ai_config = DocumentAIConfig(
         project_id=PROJECT_ID,
