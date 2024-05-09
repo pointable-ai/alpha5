@@ -4,10 +4,24 @@ import fitz
 
 
 def get_pdf_quadrants(num_of_quadrants: int, page_rect: fitz.Rect) -> List[fitz.Rect]:
-    rows = cols = int(num_of_quadrants**0.5)
-    if num_of_quadrants == 2:
-        cols = 2  # For 2 quadrants, we need 2 columns and 1 row
-        rows = 1
+    if num_of_quadrants in [1, 2, 4, 6, 8, 10]:
+        if num_of_quadrants == 1:
+            rows, cols = 1, 1
+        elif num_of_quadrants == 2:
+            rows, cols = 1, 2
+        elif num_of_quadrants == 4:
+            rows, cols = 2, 2
+        elif num_of_quadrants == 6:
+            rows, cols = 2, 3
+        elif num_of_quadrants == 8:
+            rows, cols = 2, 4
+        elif num_of_quadrants == 10:
+            rows, cols = 2, 5
+    else:
+        raise ValueError(
+            "Unsupported number of quadrants. Supported values are 1, 2, 4, 6, 8, and 10."
+        )
+
     quadrant_width = page_rect.width / cols
     quadrant_height = page_rect.height / rows
     quadrants = []
