@@ -1,8 +1,18 @@
 from pathlib import Path
 from typing import List, Union
+import logging
 
 from cloudpathlib import CloudPath
 import fitz
+
+
+# Setup logging
+logging.basicConfig(
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger()
 
 
 def get_pdf_quadrants(num_of_quadrants: int, page_rect: fitz.Rect) -> List[fitz.Rect]:
@@ -52,11 +62,12 @@ def create_nup_pdf(
     # now copy input pages to output
     doc = fitz.open()
     for src_page in src:
+        if src_page.get_contents() == []:
+            logger.info(f"Page {src_page.number} is empty. Skipping.")
+            continue
         if src_page.number % nup_pages == 0:  # create new output page
             page = doc.new_page(-1, width=width, height=height)
         # insert input page into the correct rectangle
-        print(quadrants)
-        print(src_page.number % nup_pages)
         page.show_pdf_page(
             quadrants[src_page.number % nup_pages],  # select output rect
             src,  # input document
