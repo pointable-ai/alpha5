@@ -1,5 +1,7 @@
-from typing import List
+from pathlib import Path
+from typing import List, Union
 
+from cloudpathlib import CloudPath
 import fitz
 
 
@@ -36,9 +38,9 @@ def get_pdf_quadrants(num_of_quadrants: int, page_rect: fitz.Rect) -> List[fitz.
 
 
 def create_nup_pdf(
-    filepath: str,
+    filepath: Union[str, Path, CloudPath],
     nup_pages: int,
-    output_filepath: str,
+    output_filepath: Union[str, Path, CloudPath],
     page_size: str = "letter",
 ):
     src = fitz.open(filepath)
