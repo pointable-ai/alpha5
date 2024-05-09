@@ -61,15 +61,19 @@ def create_nup_pdf(
 
     # now copy input pages to output
     doc = fitz.open()
+    skipped_pages = 0
     for src_page in src:
         if src_page.get_contents() == []:
             logger.info(f"Page {src_page.number} is empty. Skipping.")
+            skipped_pages += 1
             continue
-        if src_page.number % nup_pages == 0:  # create new output page
+        if (src_page.number - skipped_pages) % nup_pages == 0:  # create new output page
             page = doc.new_page(-1, width=width, height=height)
         # insert input page into the correct rectangle
         page.show_pdf_page(
-            quadrants[src_page.number % nup_pages],  # select output rect
+            quadrants[
+                (src_page.number - skipped_pages) % nup_pages
+            ],  # select output rect
             src,  # input document
             src_page.number,
         )  # input page number
