@@ -103,7 +103,8 @@ def process_document_ocr(
     Process a single, local document using the Document AI OCR processor.
     """
     if doc_ai_config.mime_type == "application/pdf":
-        with PdfReader(doc_ai_config.file_path) as reader:
+        with open(doc_ai_config.file_path, "rb") as f:
+            reader = PdfReader(f)
             if len(reader.pages) > MAX_SYNCRONOUS_PAGES:
                 raise ValueError(
                     f"Too many pages to process, max is {MAX_SYNCRONOUS_PAGES}"
