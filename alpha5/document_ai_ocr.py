@@ -340,13 +340,17 @@ if __name__ == "__main__":
     doc_processor_client = build_doc_processor_client(doc_ai_config.location)
 
     # # ===Synchronous Processing===
-    # document = process_document_ocr(doc_processor_client, doc_ai_config, process_options)
+    # document = process_document_ocr(
+    #     doc_processor_client, doc_ai_config, process_options
+    # )
     # logger.info(document.text)
+    # with open("output.txt", "w") as f:
+    #     f.write(document.text)
     # # ===End Synchronous Processing===
 
     # ===Async Processing===
     # Upload files for async processing
-    GCS_PREFIX = "beta_test"
+    GCS_PREFIX = "beta"
     # storage_client = storage.Client()
     # blob_transfer_config = BlobStorageTransferConfig(
     #     project_id=PROJECT_ID,
@@ -357,12 +361,12 @@ if __name__ == "__main__":
     # upload_files_to_blob_storage(storage_client, blob_transfer_config)
 
     # Setup async batch processing
-    OUTPUT_SUBDIR = "beta_test_output"
+    OUTPUT_SUBDIR = "beta_output"
     batch_config = BatchConfig(
         gcs_bucket_name=GCS_BUCKET_NAME,
         gcs_prefix=GCS_PREFIX,  # root dir if empty string
         gcs_output_uri=f"gs://{GCS_BUCKET_NAME}/{OUTPUT_SUBDIR}/",
-        batch_size=1,
+        batch_size=20,
     )
 
     # If you're getting google.api_core.exceptions.PermissionDenied: 403, you either need
@@ -377,15 +381,24 @@ if __name__ == "__main__":
     )
     # ===End Async Processing===
 
-    # ===Record Failed Operations===
+    # ===Record Operations===
+    now = datetime.now().isoformat()
     failed_operations = [
         operation.operation.name
         for operation in batch_operations
         if operation.metadata.state != documentai.BatchProcessMetadata.State.SUCCEEDED
     ]
-    with open(f"failed_operations_{datetime.now().isoformat()}.txt", "w") as f:
+    with open(f"failed_operations_{now}.txt", "w") as f:
         f.write("\n".join(failed_operations))
-    # ===End Record Failed Operations===
+
+    successful_operations = [
+        operation.operation.name
+        for operation in batch_operations
+        if operation.metadata.state == documentai.BatchProcessMetadata.State.SUCCEEDED
+    ]
+    with open(f"successful_operations_{now}.txt", "w") as f:
+        f.write("\n".join(successful_operations))
+    # ===End Record Operations===
 
     # ===Retrieving OCR Results===
     all_ocr_results = {}
@@ -394,6 +407,6 @@ if __name__ == "__main__":
             ocr_results = get_contents_from_ocr_batch_operation(batch_operation)
             all_ocr_results.update(ocr_results)
 
-    with open(f"ocr_results_{datetime.now().isoformat()}.json", "w") as f:
+    with open(f"ocr_results_{now}.json", "w") as f:
         json.dump(all_ocr_results, f)
     # ===End Retrieving OCR Results===
