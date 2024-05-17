@@ -7,8 +7,11 @@ These helper functions are designed to be more user friendly and robustly docume
 import json
 import logging
 import time
+from datetime import datetime
 from dataclasses import dataclass
+from more_itertools import zip_broadcast
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Union
 
 import google.auth
@@ -36,9 +39,7 @@ MAX_SYNCRONOUS_REQUESTS = 120  # per processor, per minute
 # Async/Batch Limits
 MAX_BATCH_PAGES = 500
 MAX_BATCH_SIZE = 1000  # number of files
-MAX_BATCH_REQUESTS = (
-    10  # max request limit as of v1beta2 (client should be using v1 now)
-)
+MAX_BATCH_REQUESTS = 5  # max request limit for us
 
 TIMEOUT = 60 * 10  # 10 minutes
 
@@ -159,11 +160,6 @@ def batch_process_document_ocr(
         gcs_prefix=batch_config.gcs_prefix,
         batch_size=batch_config.batch_size,
     )
-    if len(batches) > MAX_BATCH_REQUESTS and async_operation:
-        raise ValueError(
-            f"Currently async is not supported exceeding max batch requests of {MAX_BATCH_REQUESTS}, "
-            f"we have {len(batches)}"
-        )
 
     # The full resource name of the processor version, e.g.:
     # `projects/{project_id}/locations/{location}/processors/{processor_id}/processorVersions/{processor_version_id}`
@@ -175,39 +171,64 @@ def batch_process_document_ocr(
         doc_ai_config.processor_version,
     )
 
-    batch_operations = []
-    for batch in batches:
-        # Configure the process request
-        request = documentai.BatchProcessRequest(
+    # Configure the process request
+    batch_requests = [
+        documentai.BatchProcessRequest(
             name=name,
             input_documents=batch,
             document_output_config=output_config,
             # Only for Document OCR processor
             process_options=process_options,
         )
-
-        operation = client.batch_process_documents(request=request)
-        batch_operations.append(operation)
-
-        # TODO: split out batch operation so that we can run async using mp and keep track of total requests
-        if async_operation:
-            continue
-        try:
-            logger.info(
-                f"Waiting for operation {operation.operation.name} to complete..."
+        for batch in batches
+    ]
+    if async_operation:
+        print(list(zip_broadcast(client, batches)))
+        with ThreadPoolExecutor(max_workers=MAX_BATCH_REQUESTS) as executor:
+            batch_operations = executor.map(
+                run_batch_operation_request,
+                (client for _ in batch_requests),
+                batch_requests,
+                chunksize=MAX_BATCH_REQUESTS,
             )
-            total_wait_time = 0
-            while not operation.done():
-                time.sleep(15)
-                total_wait_time += 15
-                logger.info(f"{total_wait_time} seconds elapsed")
-                if total_wait_time > TIMEOUT:
-                    logger.info(f"Operation {operation.operation.name} timed out.")
-                    break
-        except (RetryError, InternalServerError) as e:
-            logger.error(e.message)
+    else:
+        batch_operations = []
+        for request in batch_requests:
+            operation = run_batch_operation_request(client, request)
+            batch_operations.append(operation)
 
     return batch_operations
+
+
+def run_batch_operation_request(
+    client: documentai.DocumentProcessorServiceClient,
+    batch_process_request: documentai.BatchProcessRequest,
+) -> operation.Operation:
+    operation = client.batch_process_documents(request=batch_process_request)
+
+    try:
+        logger.info(f"Starting operation {operation.operation.name}...")
+        total_wait_time = 0
+        while not operation.done():
+            time.sleep(15)
+            total_wait_time += 15
+            logger.info(
+                f"{total_wait_time} seconds elapsed for {operation.operation.name}"
+            )
+            # Timeout used for both blocking and async operations here
+            if total_wait_time > TIMEOUT:
+                logger.info(f"Operation {operation.operation.name} timed out.")
+                break
+        else:
+            logger.info(
+                f"Operation {operation.operation.name} completed, sleeping for 5 seconds for quota limit to reset."
+            )
+            time.sleep(5)
+            logger.info(f"Operation {operation.operation.name} completed.")
+    except (RetryError, InternalServerError) as e:
+        logger.error(e.message)
+
+    return list(operation)
 
 
 def check_batch_operation_status(batch_operation: operation.Operation) -> bool:
@@ -325,32 +346,46 @@ if __name__ == "__main__":
 
     # ===Async Processing===
     # Upload files for async processing
-    GCS_PREFIX = "ops_demo"
-    storage_client = storage.Client()
-    blob_transfer_config = BlobStorageTransferConfig(
-        project_id=PROJECT_ID,
-        source_directory="./demo",
-        gcs_bucket_name=GCS_BUCKET_NAME,
-        gcs_prefix=GCS_PREFIX,
-    )
-    upload_files_to_blob_storage(storage_client, blob_transfer_config)
+    GCS_PREFIX = "beta_test"
+    # storage_client = storage.Client()
+    # blob_transfer_config = BlobStorageTransferConfig(
+    #     project_id=PROJECT_ID,
+    #     source_directory="./demo",
+    #     gcs_bucket_name=GCS_BUCKET_NAME,
+    #     gcs_prefix=GCS_PREFIX,
+    # )
+    # upload_files_to_blob_storage(storage_client, blob_transfer_config)
 
     # Setup async batch processing
-    OUTPUT_SUBDIR = "ops_demo_output"
+    OUTPUT_SUBDIR = "beta_test_output"
     batch_config = BatchConfig(
         gcs_bucket_name=GCS_BUCKET_NAME,
         gcs_prefix=GCS_PREFIX,  # root dir if empty string
         gcs_output_uri=f"gs://{GCS_BUCKET_NAME}/{OUTPUT_SUBDIR}/",
-        batch_size=MAX_BATCH_SIZE,
+        batch_size=1,
     )
 
     # If you're getting google.api_core.exceptions.PermissionDenied: 403, you either need
     # to set GOOGLE_APPLICATION_CREDENTIALS to a local credentials.json
     # or run `gcloud auth application-default login` after you set your default project
     batch_operations = batch_process_document_ocr(
-        batch_config, doc_processor_client, doc_ai_config, process_options
+        batch_config,
+        doc_processor_client,
+        doc_ai_config,
+        process_options,
+        async_operation=True,
     )
     # ===End Async Processing===
+
+    # ===Record Failed Operations===
+    failed_operations = [
+        operation.operation.name
+        for operation in batch_operations
+        if operation.metadata.state != documentai.BatchProcessMetadata.State.SUCCEEDED
+    ]
+    with open(f"failed_operations_{datetime.now().isoformat()}.txt", "w") as f:
+        f.write("\n".join(failed_operations))
+    # ===End Record Failed Operations===
 
     # ===Retrieving OCR Results===
     all_ocr_results = {}
@@ -358,4 +393,7 @@ if __name__ == "__main__":
         if check_batch_operation_status(batch_operation):
             ocr_results = get_contents_from_ocr_batch_operation(batch_operation)
             all_ocr_results.update(ocr_results)
+
+    with open(f"ocr_results_{datetime.now().isoformat()}.json", "w") as f:
+        json.dump(all_ocr_results, f)
     # ===End Retrieving OCR Results===
